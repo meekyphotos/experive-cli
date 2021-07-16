@@ -11,8 +11,14 @@ func InitApp() *cli.App {
 		Description: "Data management tool",
 		Commands: []*cli.Command{
 			commands.DownloadMeta(),
-			commands.LoadWofMeta(),
-			commands.LoadOsmMeta(),
+			commands.ListMeta(),
+			{
+				Name: "load",
+				Subcommands: []*cli.Command{
+					commands.LoadWofMeta(),
+					commands.LoadOsmMeta(),
+				},
+			},
 		},
 		UseShortOptionHandling: true,
 	}
