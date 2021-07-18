@@ -36,6 +36,9 @@ func determineOsmCols(c *utils.Config) []connectors.Column {
 }
 
 func (r OsmRunner) Run(c *utils.Config) error {
+	r.Connector = &connectors.PgConnector{
+		Config: c, TableName: c.TableName,
+	}
 	dbErr := r.Connector.Connect()
 	if dbErr != nil {
 		return dbErr

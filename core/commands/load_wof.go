@@ -51,6 +51,9 @@ func determineCols(c *utils.Config) []connectors.Column {
 }
 
 func (r WofRunner) Run(c *utils.Config) error {
+	r.Connector = &connectors.PgConnector{
+		Config: c, TableName: c.TableName,
+	}
 	dbErr := r.Connector.Connect()
 	if dbErr != nil {
 		return dbErr
