@@ -2,6 +2,7 @@ package osm
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 )
 
@@ -90,6 +91,8 @@ var keyVal = []byte(`":"`)
 var quotes = []byte(`"`)
 var endPar = []byte(`}`)
 var nameBytes = []byte(`name`)
+var carriageReturn = regexp.MustCompile(`[\n\r"\\]`)
+var escapeQuote = regexp.MustCompile(`"`)
 
 // Make tags map from stringtable and array of IDs (used in DenseNodes encoding).
 func (tu *tagUnpacker) next() (string, string, string, string) {
@@ -135,7 +138,8 @@ keyLoop:
 			}
 			nameJson.Write(keyBytes)
 			nameJson.Write(keyVal)
-			nameJson.Write(valBytes)
+			cleaned := carriageReturn.ReplaceAll(valBytes, []byte{})
+			nameJson.Write(cleaned)
 			nameJson.Write(quotes)
 		} else {
 			if !firstTag {
@@ -146,7 +150,8 @@ keyLoop:
 			}
 			tagsJson.Write(keyBytes)
 			tagsJson.Write(keyVal)
-			tagsJson.Write(valBytes)
+			cleaned := carriageReturn.ReplaceAll(valBytes, []byte{})
+			tagsJson.Write(cleaned)
 			tagsJson.Write(quotes)
 
 		}

@@ -72,8 +72,9 @@ func (r WofRunner) Run(c *utils.Config) error {
 	requests := pipeline.BatchRequest(channelOut, 10000, time.Second)
 	var pgWorkers sync.WaitGroup
 	pgWorkers.Add(1)
+	beat := &pipeline.ProgressBarBeat{OperationName: "Writing"}
 	go func() {
-		err := pipeline.ProcessChannel(requests, r.Connector)
+		err := pipeline.ProcessChannel(requests, r.Connector, beat)
 		if err != nil {
 			panic(err)
 		}

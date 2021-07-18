@@ -5,20 +5,25 @@ import (
 	"time"
 )
 
-func ProcessChannel(channel chan []map[string]interface{}, db connectors.Connector) error {
+func ProcessChannel(channel chan []map[string]interface{}, db connectors.Connector, beat Heartbeat) error {
+	beat.Start()
+	defer beat.Done()
 	for {
 		select {
 		case content := <-channel:
-			if len(content) == 0 {
+			i := len(content)
+			if i == 0 {
 				return nil
 			}
 			err := db.Write(content)
+			beat.Beat(i)
 			if err != nil {
 				return err
 			}
 		default:
 		}
 	}
+
 }
 
 func BatchRequest(values <-chan map[string]interface{}, maxItems int, maxTimeout time.Duration) chan []map[string]interface{} {

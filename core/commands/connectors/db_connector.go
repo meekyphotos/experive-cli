@@ -8,6 +8,7 @@ import (
 	"github.com/godruoyi/go-snowflake"
 	"github.com/lib/pq"
 	"github.com/meekyphotos/experive-cli/core/utils"
+	"regexp"
 	"strings"
 )
 
@@ -36,6 +37,8 @@ func (p *PgConnector) Close() {
 		panic(err)
 	}
 }
+
+var carriageReturn = regexp.MustCompile("[\n\r]")
 
 func (p *PgConnector) Write(data []map[string]interface{}) error {
 	if p.columns == nil {
@@ -71,7 +74,8 @@ func (p *PgConnector) Write(data []map[string]interface{}) error {
 				value := row[c.Name]
 				switch value.(type) {
 				case string: // already marshalled
-					vals[i] = value
+					repairedString := string(carriageReturn.ReplaceAll([]byte(value.(string)), []byte{}))
+					vals[i] = repairedString
 				default:
 					marshal, err := json.Marshal(value)
 					if err != nil {
@@ -122,6 +126,8 @@ func (p *PgConnector) Init(columns []Column) error {
 		stmt.WriteString(f.Name)
 		stmt.WriteString(" ")
 		switch f.Type {
+		case Snowflake:
+			stmt.WriteString("bigint")
 		case Bigint:
 			stmt.WriteString("bigint")
 		case DoublePrecision:

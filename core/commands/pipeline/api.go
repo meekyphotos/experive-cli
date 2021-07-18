@@ -54,7 +54,7 @@ type ProgressBarBeat struct {
 }
 
 func (b *ProgressBarBeat) Start() {
-	b.bar = progressbar.NewOptions64(-1, progressbar.OptionSetDescription(b.OperationName))
+	b.bar = progressbar.Default(-1, "Writing")
 
 }
 func (b *ProgressBarBeat) Beat(amount int) {
