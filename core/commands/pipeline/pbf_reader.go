@@ -39,7 +39,7 @@ func ReadFromPbf(path string, heartbeat Heartbeat) (chan map[string]interface{},
 			switch v.(type) {
 			case *osm.Node:
 				m := make(map[string]interface{}, 7)
-				node := v.(osm.Node)
+				node := v.(*osm.Node)
 				m["osm_id"] = node.OsmId
 				m["class"] = node.Class
 				m["type"] = node.Type
