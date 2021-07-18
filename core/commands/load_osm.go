@@ -52,7 +52,7 @@ func (r OsmRunner) Run(c *utils.Config) error {
 	if err != nil {
 		return err
 	}
-	requests := pipeline.BatchRequest(channel, 2500, time.Second)
+	requests := pipeline.BatchRequest(channel, 10000, time.Second)
 	var pgWorkers sync.WaitGroup
 	pgWorkers.Add(1)
 	beat := &pipeline.ProgressBarBeat{OperationName: "Writing"}

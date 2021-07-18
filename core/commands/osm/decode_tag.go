@@ -91,7 +91,7 @@ var keyVal = []byte(`":"`)
 var quotes = []byte(`"`)
 var endPar = []byte(`}`)
 var nameBytes = []byte(`name`)
-var carriageReturn = regexp.MustCompile(`[\n\r"\\]`)
+var carriageReturn = regexp.MustCompile(`[\n\r\t"\\]`)
 var escapeQuote = regexp.MustCompile(`"`)
 
 // Make tags map from stringtable and array of IDs (used in DenseNodes encoding).

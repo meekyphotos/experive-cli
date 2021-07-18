@@ -74,8 +74,7 @@ func (p *PgConnector) Write(data []map[string]interface{}) error {
 				value := row[c.Name]
 				switch value.(type) {
 				case string: // already marshalled
-					repairedString := string(carriageReturn.ReplaceAll([]byte(value.(string)), []byte{}))
-					vals[i] = repairedString
+					vals[i] = value
 				default:
 					marshal, err := json.Marshal(value)
 					if err != nil {
