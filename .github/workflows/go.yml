@@ -1,0 +1,31 @@
+name: Go
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.16
+
+      - name: Build Windows
+        run: env GOOS=windows GOARCH=amd64 go build -o experive.exe -v cmd/cli/main.go
+
+      - name: Build Linux x64
+        run: env GOOS=linux GOARCH=amd64 go build -o experive cmd/cli/main.go
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            experive.exe
+            experive
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -68,11 +68,17 @@ func (p *PgConnector) Write(data []map[string]interface{}) error {
 			case Text:
 				vals[i] = row[c.Name]
 			case Jsonb:
-				marshal, err := json.Marshal(row[c.Name])
-				if err != nil {
-					return err
+				value := row[c.Name]
+				switch value.(type) {
+				case string: // already marshalled
+					vals[i] = value
+				default:
+					marshal, err := json.Marshal(value)
+					if err != nil {
+						return err
+					}
+					vals[i] = string(marshal)
 				}
-				vals[i] = string(marshal)
 			case Point:
 				if lat, ok := row["latitude"]; ok {
 					if lng, ok := row["longitude"]; ok {

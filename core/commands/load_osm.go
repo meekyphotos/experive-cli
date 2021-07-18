@@ -1,11 +1,74 @@
 package commands
 
 import (
-	"fmt"
+	"github.com/meekyphotos/experive-cli/core/commands/connectors"
+	"github.com/meekyphotos/experive-cli/core/commands/pipeline"
+	"github.com/meekyphotos/experive-cli/core/utils"
 	"github.com/urfave/cli/v2"
+	"sync"
+	"time"
 )
 
+type OsmRunner struct {
+	Connector connectors.Connector
+}
+
+var osmFields = []connectors.Column{
+	{Name: "id", Type: connectors.Snowflake},
+	{Name: "osm_id", Type: connectors.Bigint, Indexed: true},
+	{Name: "class", Type: connectors.Text},
+	{Name: "type", Type: connectors.Text},
+	{Name: "names", Type: connectors.Jsonb},
+}
+
+func determineOsmCols(c *utils.Config) []connectors.Column {
+	cols := make([]connectors.Column, 0)
+	cols = append(cols, osmFields...)
+	if c.InclKeyValues {
+		cols = append(cols, connectors.Column{Name: "metadata", Type: connectors.Jsonb})
+	}
+	if c.UseGeom {
+		cols = append(cols, geomFields...)
+	} else {
+		cols = append(cols, latLngFields...)
+	}
+	return cols
+}
+
+func (r OsmRunner) Run(c *utils.Config) error {
+	dbErr := r.Connector.Connect()
+	if dbErr != nil {
+		return dbErr
+	}
+	defer r.Connector.Close()
+	dbErr = r.Connector.Init(determineOsmCols(c))
+	if dbErr != nil {
+		return dbErr
+	}
+	channel, err := pipeline.ReadFromPbf(c.File, &pipeline.NoopBeat{})
+	if err != nil {
+		return err
+	}
+	requests := pipeline.BatchRequest(channel, 10000, time.Second)
+	var pgWorkers sync.WaitGroup
+	pgWorkers.Add(1)
+	go func() {
+		err := pipeline.ProcessChannel(requests, r.Connector)
+		if err != nil {
+			panic(err)
+		}
+		pgWorkers.Done()
+	}()
+	pgWorkers.Wait()
+	return r.Connector.CreateIndexes()
+}
+
 func LoadOsmMeta() *cli.Command {
+	stdAction := utils.DatabaseLoader{
+		Runner:           OsmRunner{},
+		PasswordProvider: utils.TerminalPasswordReader{},
+	}
+
 	return &cli.Command{
 		Name:        "osm",
 		Usage:       "Load a osm dataset into target postgres",
@@ -25,14 +88,11 @@ func LoadOsmMeta() *cli.Command {
 			&cli.BoolFlag{Name: "latlong", Value: false, Usage: "Store coordinates in degrees of latitude & longitude."},
 			&cli.StringFlag{Name: "t", Aliases: []string{"table"}, Value: "planet_data", Usage: "Output table name"},
 
-			&cli.BoolFlag{Name: "j", Aliases: []string{"json"}, Value: false, Usage: "Add tags without column to an additional json (key/value) column in the database tables."},
+			&cli.BoolFlag{Name: "j", Aliases: []string{"json"}, Value: true, Usage: "Add tags without column to an additional json (key/value) column in the database tables."},
 
 			&cli.StringFlag{Name: "schema", Value: "public", Usage: "Use PostgreSQL schema SCHEMA for all tables, indexes, and functions in the pgsql output (default is no schema, i.e. the public schema is used)."},
 		},
 		UseShortOptionHandling: true,
-		Action: func(context *cli.Context) error {
-			fmt.Println("work in progress")
-			return nil
-		},
+		Action:                 stdAction.DoLoad,
 	}
 }
