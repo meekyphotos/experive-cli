@@ -3,7 +3,6 @@ package osm
 import (
 	"github.com/meekyphotos/experive-cli/core/commands/pbf"
 	"google.golang.org/protobuf/proto"
-	"time"
 )
 
 type dataDecoder struct {
@@ -37,16 +36,16 @@ func (dec *dataDecoder) parsePrimitiveBlock(pb *pbf.PrimitiveBlock) {
 }
 
 func (dec *dataDecoder) parsePrimitiveGroup(pb *pbf.PrimitiveBlock, pg *pbf.PrimitiveGroup) {
-	if !dec.skipNodes {
-		dec.parseNodes(pb, pg.GetNodes())
-		dec.parseDenseNodes(pb, pg.GetDense())
-	}
-	if !dec.skipWays {
-		dec.parseWays(pb, pg.GetWays())
-	}
-	if !dec.skipRelations {
-		dec.parseRelations(pb, pg.GetRelations())
-	}
+	//if !dec.skipNodes {
+	dec.parseNodes(pb, pg.GetNodes())
+	dec.parseDenseNodes(pb, pg.GetDense())
+	//}
+	//if !dec.skipWays {
+	dec.parseWays(pb, pg.GetWays())
+	//}
+	//if !dec.skipRelations {
+	dec.parseRelations(pb, pg.GetRelations())
+	//}
 }
 
 func (dec *dataDecoder) parseNodes(pb *pbf.PrimitiveBlock, nodes []*pbf.Node) {
@@ -66,14 +65,17 @@ func (dec *dataDecoder) parseNodes(pb *pbf.PrimitiveBlock, nodes []*pbf.Node) {
 
 		tags, names, class, osmType := ExtractInfo(st, node.GetKeys(), node.GetVals())
 		if len(tags) != 2 || len(names) != 2 {
+
 			dec.q = append(dec.q, &Node{
-				OsmId: id,
-				Lat:   latitude,
-				Lon:   longitude,
-				Tags:  tags,
-				Names: names,
-				Class: class,
-				Type:  osmType,
+				Content: map[string]interface{}{
+					"osm_id":    id,
+					"class":     class,
+					"type":      osmType,
+					"latitude":  latitude,
+					"longitude": longitude,
+					"metadata":  tags,
+					"names":     names,
+				},
 			})
 		}
 	}
@@ -97,9 +99,21 @@ func (dec *dataDecoder) parseDenseNodes(pb *pbf.PrimitiveBlock, dn *pbf.DenseNod
 		lon = lons[index] + lon
 		latitude := 1e-9 * float64(latOffset+(granularity*lat))
 		longitude := 1e-9 * float64(lonOffset+(granularity*lon))
-		tags, names, class, osmType := tu.next()
-		if len(tags) != 2 || len(names) != 2 {
-			dec.q = append(dec.q, &Node{id, class, osmType, latitude, longitude, tags, names})
+		tags, names, address, class, osmType := tu.next()
+		if len(tags) != 0 || len(names) != 0 {
+			dec.q = append(dec.q, &Node{
+				Content: map[string]interface{}{
+					"osm_id":    id,
+					"osm_type":  'N',
+					"class":     class,
+					"type":      osmType,
+					"name":      names,
+					"address":   address,
+					"latitude":  latitude,
+					"longitude": longitude,
+					"extratags": tags,
+				},
+			})
 		}
 	}
 }
@@ -119,7 +133,14 @@ func (dec *dataDecoder) parseWays(pb *pbf.PrimitiveBlock, ways []*pbf.Way) {
 			nodeID = refs[index] + nodeID // delta encoding
 			nodeIDs[index] = nodeID
 		}
-		dec.q = append(dec.q, &Way{ID: id, Tags: tags, NodeIDs: nodeIDs})
+
+		dec.q = append(dec.q, &Way{
+			Content: map[string]interface{}{
+				"osm_id":    id,
+				"extratags": tags,
+				"node_ids":  nodeIDs,
+			},
+		})
 	}
 }
 
@@ -154,37 +175,18 @@ func extractMembers(stringTable [][]byte, rel *pbf.Relation) []Member {
 
 func (dec *dataDecoder) parseRelations(pb *pbf.PrimitiveBlock, relations []*pbf.Relation) {
 	st := pb.GetStringtable().GetS()
-	dateGranularity := int64(pb.GetDateGranularity())
 
 	for _, rel := range relations {
 		id := rel.GetId()
 		tags := extractTags(st, rel.GetKeys(), rel.GetVals())
 		members := extractMembers(st, rel)
-		info := extractInfo(st, rel.GetInfo(), dateGranularity)
 
-		dec.q = append(dec.q, &Relation{id, tags, members, info})
+		dec.q = append(dec.q, &Relation{
+			Content: map[string]interface{}{
+				"osm_id":    id,
+				"extratags": tags,
+				"members":   members,
+			},
+		})
 	}
-}
-
-func extractInfo(stringTable [][]byte, i *pbf.Info, dateGranularity int64) Info {
-	info := Info{Visible: true}
-
-	if i != nil {
-		info.Version = i.GetVersion()
-
-		millisec := time.Duration(i.GetTimestamp()*dateGranularity) * time.Millisecond
-		info.Timestamp = time.Unix(0, millisec.Nanoseconds()).UTC()
-
-		info.Changeset = i.GetChangeset()
-
-		info.Uid = i.GetUid()
-
-		info.User = string(stringTable[i.GetUserSid()])
-
-		if i.Visible != nil {
-			info.Visible = i.GetVisible()
-		}
-	}
-
-	return info
 }

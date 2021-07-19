@@ -91,18 +91,50 @@ var keyVal = []byte(`":"`)
 var quotes = []byte(`"`)
 var endPar = []byte(`}`)
 var nameBytes = []byte(`name`)
+var addressBytes = []byte(`addr:`)
 var carriageReturn = regexp.MustCompile(`[\n\r\t"\\]`)
 var escapeQuote = regexp.MustCompile(`"`)
 
+type json struct {
+	started bool
+	buffer  *strings.Builder
+}
+
+func newJson() json {
+	return json{
+		buffer: &strings.Builder{},
+	}
+}
+func (js *json) close() {
+	if js.started {
+		js.buffer.Write(endPar)
+	}
+}
+
+func (js *json) toString() string {
+	return js.buffer.String()
+}
+func (js *json) add(key []byte, val []byte) {
+	if js.started {
+		js.buffer.Write(openWithComma)
+	} else {
+		js.started = true
+		js.buffer.Write(openPar)
+		js.buffer.Write(quotes)
+	}
+	js.buffer.Write(key)
+	js.buffer.Write(keyVal)
+	cleaned := carriageReturn.ReplaceAll(val, []byte{})
+	js.buffer.Write(cleaned)
+	js.buffer.Write(quotes)
+}
+
 // Make tags map from stringtable and array of IDs (used in DenseNodes encoding).
-func (tu *tagUnpacker) next() (string, string, string, string) {
+func (tu *tagUnpacker) next() (string, string, string, string, string) {
 	var class, osmType string
-	tagsJson := strings.Builder{}
-	nameJson := strings.Builder{}
-	tagsJson.Write(openPar)
-	nameJson.Write(openPar)
-	firstName := true
-	firstTag := true
+	tagsJson := newJson()
+	nameJson := newJson()
+	addressJson := newJson()
 keyLoop:
 	for tu.index < len(tu.keysVals) {
 		keyID := tu.keysVals[tu.index]
@@ -125,38 +157,20 @@ keyLoop:
 			if bytes.Equal(b, keyBytes) {
 				class = string(b)
 				osmType = string(valBytes)
-				continue keyLoop
+				break // add key anyway
 			}
 		}
 
 		if bytes.Contains(keyBytes, nameBytes) {
-			if !firstName {
-				nameJson.Write(openWithComma)
-			} else {
-				firstName = false
-				nameJson.Write(quotes)
-			}
-			nameJson.Write(keyBytes)
-			nameJson.Write(keyVal)
-			cleaned := carriageReturn.ReplaceAll(valBytes, []byte{})
-			nameJson.Write(cleaned)
-			nameJson.Write(quotes)
+			nameJson.add(keyBytes, valBytes)
+		} else if bytes.HasPrefix(keyBytes, addressBytes) {
+			addressJson.add(keyBytes, valBytes)
 		} else {
-			if !firstTag {
-				tagsJson.Write(openWithComma)
-			} else {
-				firstTag = false
-				tagsJson.Write(quotes)
-			}
-			tagsJson.Write(keyBytes)
-			tagsJson.Write(keyVal)
-			cleaned := carriageReturn.ReplaceAll(valBytes, []byte{})
-			tagsJson.Write(cleaned)
-			tagsJson.Write(quotes)
-
+			tagsJson.add(keyBytes, valBytes)
 		}
 	}
-	tagsJson.Write(endPar)
-	nameJson.Write(endPar)
-	return tagsJson.String(), nameJson.String(), class, osmType
+	tagsJson.close()
+	nameJson.close()
+	addressJson.close()
+	return tagsJson.toString(), nameJson.toString(), addressJson.toString(), class, osmType
 }

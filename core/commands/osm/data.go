@@ -30,20 +30,11 @@ type Info struct {
 }
 
 type Node struct {
-	OsmId int64
-	Class string
-	Type  string
-	Lat   float64
-	Lon   float64
-	Tags  string
-	Names string
+	Content map[string]interface{}
 }
 
 type Way struct {
-	ID      int64
-	Tags    map[string]string
-	NodeIDs []int64
-	Info    Info
+	Content map[string]interface{}
 }
 
 type MemberType int
@@ -61,8 +52,5 @@ type Member struct {
 }
 
 type Relation struct {
-	ID      int64
-	Tags    map[string]string
-	Members []Member
-	Info    Info
+	Content map[string]interface{}
 }

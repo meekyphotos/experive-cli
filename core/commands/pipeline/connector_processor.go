@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func ProcessChannel(channel chan []map[string]interface{}, db connectors.Connector, beat Heartbeat) error {
+func ProcessChannel(channel chan []map[string]interface{}, nodes connectors.Connector, beat Heartbeat) error {
 	beat.Start()
 	defer beat.Done()
 	for {
@@ -15,7 +15,7 @@ func ProcessChannel(channel chan []map[string]interface{}, db connectors.Connect
 			if i == 0 {
 				return nil
 			}
-			err := db.Write(content)
+			err := nodes.Write(content)
 			beat.Beat(i)
 			if err != nil {
 				return err

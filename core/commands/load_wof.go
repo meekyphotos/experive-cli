@@ -33,7 +33,7 @@ var latLngFields = []connectors.Column{
 }
 
 var geomFields = []connectors.Column{
-	{Name: "latlng", Type: connectors.Point, Indexed: true},
+	{Name: "geometry", Type: connectors.Point, Indexed: true},
 }
 
 func determineCols(c *utils.Config) []connectors.Column {

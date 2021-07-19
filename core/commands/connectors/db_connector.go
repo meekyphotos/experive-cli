@@ -15,7 +15,7 @@ import (
 type PgConnector struct {
 	Config    *utils.Config
 	TableName string
-	db        *sql.DB
+	Db        *sql.DB
 	columns   []Column
 }
 
@@ -27,12 +27,12 @@ func (p *PgConnector) Connect() error {
 	if err != nil {
 		return err
 	}
-	p.db = conn
+	p.Db = conn
 	return nil
 }
 
 func (p *PgConnector) Close() {
-	err := p.db.Close()
+	err := p.Db.Close()
 	if err != nil {
 		panic(err)
 	}
@@ -44,7 +44,7 @@ func (p *PgConnector) Write(data []map[string]interface{}) error {
 	if p.columns == nil {
 		return errors.New("no columns found, call init before starting")
 	}
-	txn, err := p.db.Begin()
+	txn, err := p.Db.Begin()
 	if err != nil {
 		return err
 	}
@@ -74,7 +74,9 @@ func (p *PgConnector) Write(data []map[string]interface{}) error {
 				value := row[c.Name]
 				switch value.(type) {
 				case string: // already marshalled
-					vals[i] = value
+					if value != "" {
+						vals[i] = value
+					}
 				default:
 					marshal, err := json.Marshal(value)
 					if err != nil {
@@ -104,13 +106,16 @@ func (p *PgConnector) Write(data []map[string]interface{}) error {
 
 func (p *PgConnector) Init(columns []Column) error {
 	p.columns = columns
-	txn, err := p.db.Begin()
+	if p.TableName == "" {
+		p.TableName = p.Config.TableName
+	}
+	txn, err := p.Db.Begin()
 	if err != nil {
 		return err
 	}
 
 	if p.Config.Create {
-		_, err := txn.Exec("DROP TABLE IF EXISTS " + p.Config.Schema + "." + p.Config.TableName)
+		_, err := txn.Exec("DROP TABLE IF EXISTS " + p.Config.Schema + "." + p.TableName)
 		if err != nil {
 			return err
 		}
@@ -119,7 +124,7 @@ func (p *PgConnector) Init(columns []Column) error {
 	stmt.WriteString("CREATE TABLE IF NOT EXISTS ")
 	stmt.WriteString(p.Config.Schema)
 	stmt.WriteString(".")
-	stmt.WriteString(p.Config.TableName)
+	stmt.WriteString(p.TableName)
 	stmt.WriteString("\n(")
 	for i, f := range columns {
 		stmt.WriteString(f.Name)
@@ -159,20 +164,20 @@ func (p *PgConnector) CreateIndexes() error {
 	if p.columns == nil {
 		return errors.New("no columns found, call init before starting")
 	}
-	txn, err := p.db.Begin()
+	txn, err := p.Db.Begin()
 	if err != nil {
 		return err
 	}
 	for _, c := range p.columns {
 		if c.Indexed {
 			if c.Type == Point {
-				_, err := txn.Exec("CREATE INDEX ON " + p.Config.Schema + "." + p.Config.TableName + " using BRIN (" + c.Name + ")")
+				_, err := txn.Exec("CREATE INDEX ON " + p.Config.Schema + "." + p.TableName + " using BRIN (" + c.Name + ")")
 				if err != nil {
 					_ = txn.Rollback()
 					return err
 				}
 			} else {
-				_, err := txn.Exec("CREATE INDEX ON " + p.Config.Schema + "." + p.Config.TableName + " (" + c.Name + ")")
+				_, err := txn.Exec("CREATE INDEX ON " + p.Config.Schema + "." + p.TableName + " (" + c.Name + ")")
 				if err != nil {
 					_ = txn.Rollback()
 					return err

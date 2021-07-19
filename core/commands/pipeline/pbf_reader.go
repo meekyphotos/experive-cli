@@ -7,12 +7,14 @@ import (
 	"runtime"
 )
 
-func ReadFromPbf(path string, heartbeat Heartbeat) (chan map[string]interface{}, error) {
+func ReadFromPbf(path string, heartbeat Heartbeat) (chan map[string]interface{}, chan map[string]interface{}, chan map[string]interface{}, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
-	out := make(chan map[string]interface{}, 100000)
+	outNodes := make(chan map[string]interface{}, 100000)
+	outWays := make(chan map[string]interface{}, 100000)
+	outRelations := make(chan map[string]interface{}, 100000)
 	heartbeat.Start()
 	go func() {
 		defer f.Close()
@@ -23,7 +25,6 @@ func ReadFromPbf(path string, heartbeat Heartbeat) (chan map[string]interface{},
 		}
 		d := osm.NewDecoder(open)
 		d.SetBufferSize(osm.MaxBlobSize)
-		d.Skip(false, true, true)
 		if err := d.Start(runtime.GOMAXPROCS(-1)); err != nil {
 			panic(err)
 		}
@@ -38,22 +39,21 @@ func ReadFromPbf(path string, heartbeat Heartbeat) (chan map[string]interface{},
 
 			switch v.(type) {
 			case *osm.Node:
-				m := make(map[string]interface{}, 7)
 				node := v.(*osm.Node)
-				m["osm_id"] = node.OsmId
-				m["class"] = node.Class
-				m["type"] = node.Type
-				m["latitude"] = node.Lat
-				m["longitude"] = node.Lon
-				m["metadata"] = node.Tags
-				m["names"] = node.Names
-				out <- m
+				outNodes <- node.Content
 			case *osm.Way:
+				node := v.(*osm.Way)
+				outWays <- node.Content
 			case *osm.Relation:
+				node := v.(*osm.Relation)
+				outRelations <- node.Content
+
 			default:
 			}
 		}
-		close(out)
+		close(outNodes)
+		close(outWays)
+		close(outRelations)
 	}()
-	return out, nil
+	return outNodes, outWays, outRelations, nil
 }

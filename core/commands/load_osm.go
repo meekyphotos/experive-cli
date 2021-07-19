@@ -10,22 +10,41 @@ import (
 )
 
 type OsmRunner struct {
-	Connector connectors.Connector
+	NodeConnector      connectors.Connector
+	WaysConnector      connectors.Connector
+	RelationsConnector connectors.Connector
 }
+
+// 	ID      int64
+//	Tags    map[string]string
+//	NodeIDs []int64
 
 var osmFields = []connectors.Column{
-	{Name: "id", Type: connectors.Snowflake},
 	{Name: "osm_id", Type: connectors.Bigint, Indexed: true},
+	{Name: "osm_type", Type: connectors.Text},
 	{Name: "class", Type: connectors.Text},
 	{Name: "type", Type: connectors.Text},
-	{Name: "names", Type: connectors.Jsonb},
+	{Name: "name", Type: connectors.Jsonb},
+	{Name: "address", Type: connectors.Jsonb},
 }
 
-func determineOsmCols(c *utils.Config) []connectors.Column {
+var wayFields = []connectors.Column{
+	{Name: "osm_id", Type: connectors.Bigint, Indexed: true},
+	{Name: "extratags", Type: connectors.Jsonb},
+	{Name: "node_ids", Type: connectors.Jsonb},
+}
+
+var relationFields = []connectors.Column{
+	{Name: "osm_id", Type: connectors.Bigint, Indexed: true},
+	{Name: "extratags", Type: connectors.Jsonb},
+	{Name: "members", Type: connectors.Jsonb},
+}
+
+func determineNodesCols(c *utils.Config) []connectors.Column {
 	cols := make([]connectors.Column, 0)
 	cols = append(cols, osmFields...)
 	if c.InclKeyValues {
-		cols = append(cols, connectors.Column{Name: "metadata", Type: connectors.Jsonb})
+		cols = append(cols, connectors.Column{Name: "extratags", Type: connectors.Jsonb})
 	}
 	if c.UseGeom {
 		cols = append(cols, geomFields...)
@@ -36,35 +55,78 @@ func determineOsmCols(c *utils.Config) []connectors.Column {
 }
 
 func (r OsmRunner) Run(c *utils.Config) error {
-	r.Connector = &connectors.PgConnector{
-		Config: c, TableName: c.TableName,
+	pg := &connectors.PgConnector{
+		Config: c, TableName: c.TableName + "_node",
 	}
-	dbErr := r.Connector.Connect()
+	r.NodeConnector = pg
+	dbErr := r.NodeConnector.Connect()
 	if dbErr != nil {
 		return dbErr
 	}
-	defer r.Connector.Close()
-	dbErr = r.Connector.Init(determineOsmCols(c))
+
+	r.WaysConnector = &connectors.PgConnector{
+		Config: c, TableName: c.TableName + "_ways", Db: pg.Db,
+	}
+	r.RelationsConnector = &connectors.PgConnector{
+		Config: c, TableName: c.TableName + "_relations", Db: pg.Db,
+	}
+	// no need to close ways & relations
+	defer r.NodeConnector.Close()
+	dbErr = r.NodeConnector.Init(determineNodesCols(c))
 	if dbErr != nil {
 		return dbErr
 	}
-	channel, err := pipeline.ReadFromPbf(c.File, &pipeline.NoopBeat{})
+	dbErr = r.WaysConnector.Init(wayFields)
+	if dbErr != nil {
+		return dbErr
+	}
+	dbErr = r.RelationsConnector.Init(relationFields)
+	if dbErr != nil {
+		return dbErr
+	}
+
+	nodeChannel, wayChannel, relationChannel, err := pipeline.ReadFromPbf(c.File, &pipeline.NoopBeat{})
 	if err != nil {
 		return err
 	}
-	requests := pipeline.BatchRequest(channel, 10000, time.Second)
+	nodeRequests := pipeline.BatchRequest(nodeChannel, 10000, time.Second)
+	wayRequests := pipeline.BatchRequest(wayChannel, 10000, time.Second)
+	relationRequests := pipeline.BatchRequest(relationChannel, 10000, time.Second)
 	var pgWorkers sync.WaitGroup
+
+	nodeBeat := &pipeline.ProgressBarBeat{OperationName: "Nodes"}
+	relationBeat := &pipeline.ProgressBarBeat{OperationName: "Relations"}
+	waysBeat := &pipeline.ProgressBarBeat{OperationName: "Ways"}
+
 	pgWorkers.Add(1)
-	beat := &pipeline.ProgressBarBeat{OperationName: "Writing"}
 	go func() {
-		err := pipeline.ProcessChannel(requests, r.Connector, beat)
+		err := pipeline.ProcessChannel(nodeRequests, r.NodeConnector, nodeBeat)
 		if err != nil {
 			panic(err)
 		}
 		pgWorkers.Done()
 	}()
+
+	pgWorkers.Add(1)
+	go func() {
+		err := pipeline.ProcessChannel(wayRequests, r.WaysConnector, waysBeat)
+		if err != nil {
+			panic(err)
+		}
+		pgWorkers.Done()
+	}()
+
+	pgWorkers.Add(1)
+	go func() {
+		err := pipeline.ProcessChannel(relationRequests, r.RelationsConnector, relationBeat)
+		if err != nil {
+			panic(err)
+		}
+		pgWorkers.Done()
+	}()
+
 	pgWorkers.Wait()
-	return r.Connector.CreateIndexes()
+	return r.NodeConnector.CreateIndexes()
 }
 
 func LoadOsmMeta() *cli.Command {
@@ -90,7 +152,7 @@ func LoadOsmMeta() *cli.Command {
 
 			// OUTPUT FORMAT
 			&cli.BoolFlag{Name: "latlong", Value: false, Usage: "Store coordinates in degrees of latitude & longitude."},
-			&cli.StringFlag{Name: "t", Aliases: []string{"table"}, Value: "planet_data", Usage: "Output table name"},
+			&cli.StringFlag{Name: "t", Aliases: []string{"table"}, Value: "planet_osm", Usage: "Prefix of table"},
 
 			&cli.BoolFlag{Name: "j", Aliases: []string{"json"}, Value: true, Usage: "Add tags without column to an additional json (key/value) column in the database tables."},
 
