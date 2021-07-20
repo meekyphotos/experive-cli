@@ -70,6 +70,7 @@ keyLoop:
 		}
 		key := string(keyBytes)
 		val := string(stringTable[valueIDs[index]])
+
 		if strings.Contains(key, "name") {
 			names[key] = val
 		} else {
@@ -87,7 +88,9 @@ type tagUnpacker struct {
 
 var openPar = []byte(`{`)
 var openWithComma = []byte(`,"`)
+var comma = []byte(`,`)
 var keyVal = []byte(`":"`)
+var keyValPrimitive = []byte(`":`)
 var quotes = []byte(`"`)
 var endPar = []byte(`}`)
 var nameBytes = []byte(`name`)
@@ -114,14 +117,9 @@ func (js *json) close() {
 func (js *json) toString() string {
 	return js.buffer.String()
 }
+
 func (js *json) add(key []byte, val []byte) {
-	if js.started {
-		js.buffer.Write(openWithComma)
-	} else {
-		js.started = true
-		js.buffer.Write(openPar)
-		js.buffer.Write(quotes)
-	}
+	js.prepareForKey()
 	js.buffer.Write(key)
 	js.buffer.Write(keyVal)
 	cleaned := carriageReturn.ReplaceAll(val, []byte{})
@@ -129,9 +127,28 @@ func (js *json) add(key []byte, val []byte) {
 	js.buffer.Write(quotes)
 }
 
+func (js *json) addPrimitive(key []byte, val []byte) {
+	if len(val) > 0 {
+		js.prepareForKey()
+		js.buffer.Write(key)
+		js.buffer.Write(keyValPrimitive)
+		js.buffer.Write(val)
+	}
+}
+
+func (js *json) prepareForKey() {
+	if js.started {
+		js.buffer.Write(openWithComma)
+	} else {
+		js.started = true
+		js.buffer.Write(openPar)
+		js.buffer.Write(quotes)
+	}
+}
+
 // Make tags map from stringtable and array of IDs (used in DenseNodes encoding).
-func (tu *tagUnpacker) next() (string, string, string, string, string) {
-	var class, osmType string
+func (tu *tagUnpacker) next() (string, string, string, []byte, []byte) {
+	var class, osmType []byte
 	tagsJson := newJson()
 	nameJson := newJson()
 	addressJson := newJson()
@@ -155,8 +172,8 @@ keyLoop:
 		valBytes := tu.stringTable[valID]
 		for _, b := range classDefiningAttributes {
 			if bytes.Equal(b, keyBytes) {
-				class = string(b)
-				osmType = string(valBytes)
+				class = b
+				osmType = valBytes
 				break // add key anyway
 			}
 		}

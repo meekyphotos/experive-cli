@@ -1,6 +1,7 @@
 package osm
 
 import (
+	"fmt"
 	"github.com/meekyphotos/experive-cli/core/commands/pbf"
 	"google.golang.org/protobuf/proto"
 )
@@ -48,6 +49,16 @@ func (dec *dataDecoder) parsePrimitiveGroup(pb *pbf.PrimitiveBlock, pg *pbf.Prim
 	//}
 }
 
+var osmIdBytes = []byte("osm_id")
+var osmTypeBytes = []byte("osm_type")
+var classBytes = []byte("class")
+var typeBytes = []byte("type")
+var latitudeBytes = []byte("latitude")
+var longitudeBytes = []byte("longitude")
+var metadataBytes = []byte("extratags")
+var namesBytes = []byte("name")
+var addressesBytes = []byte("address")
+
 func (dec *dataDecoder) parseNodes(pb *pbf.PrimitiveBlock, nodes []*pbf.Node) {
 	st := pb.GetStringtable().GetS()
 	granularity := int64(pb.GetGranularity())
@@ -64,20 +75,7 @@ func (dec *dataDecoder) parseNodes(pb *pbf.PrimitiveBlock, nodes []*pbf.Node) {
 		longitude := 1e-9 * float64(lonOffset+(granularity*lon))
 
 		tags, names, class, osmType := ExtractInfo(st, node.GetKeys(), node.GetVals())
-		if len(tags) != 2 || len(names) != 2 {
-
-			dec.q = append(dec.q, &Node{
-				Content: map[string]interface{}{
-					"osm_id":    id,
-					"class":     class,
-					"type":      osmType,
-					"latitude":  latitude,
-					"longitude": longitude,
-					"metadata":  tags,
-					"names":     names,
-				},
-			})
-		}
+		dec.addNodeQueue(tags, names, id, []byte(class), []byte(osmType), "", latitude, longitude)
 	}
 
 }
@@ -100,21 +98,27 @@ func (dec *dataDecoder) parseDenseNodes(pb *pbf.PrimitiveBlock, dn *pbf.DenseNod
 		latitude := 1e-9 * float64(latOffset+(granularity*lat))
 		longitude := 1e-9 * float64(lonOffset+(granularity*lon))
 		tags, names, address, class, osmType := tu.next()
-		if len(tags) != 0 || len(names) != 0 {
-			dec.q = append(dec.q, &Node{
-				Content: map[string]interface{}{
-					"osm_id":    id,
-					"osm_type":  'N',
-					"class":     class,
-					"type":      osmType,
-					"name":      names,
-					"address":   address,
-					"latitude":  latitude,
-					"longitude": longitude,
-					"extratags": tags,
-				},
-			})
-		}
+		dec.addNodeQueue(tags, names, id, class, osmType, address, latitude, longitude)
+	}
+}
+
+func (dec *dataDecoder) addNodeQueue(tags string, names string, id int64, class []byte, osmType []byte, address string, latitude float64, longitude float64) {
+	if len(tags) != 0 || len(names) != 0 {
+		json := newJson()
+		json.addPrimitive(osmIdBytes, []byte(fmt.Sprintf("%d", id)))
+		json.add(osmTypeBytes, []byte("N"))
+		json.add(classBytes, class)
+		json.add(typeBytes, osmType)
+		json.addPrimitive(namesBytes, []byte(names))
+		json.addPrimitive(addressBytes, []byte(address))
+		json.addPrimitive(metadataBytes, []byte(tags))
+		json.addPrimitive(latitudeBytes, []byte(fmt.Sprintf("%f", latitude)))
+		json.addPrimitive(longitudeBytes, []byte(fmt.Sprintf("%f", longitude)))
+		json.close()
+		dec.q = append(dec.q, &Node{
+			Id:      id,
+			Content: []byte(json.toString()),
+		})
 	}
 }
 
@@ -135,11 +139,7 @@ func (dec *dataDecoder) parseWays(pb *pbf.PrimitiveBlock, ways []*pbf.Way) {
 		}
 
 		dec.q = append(dec.q, &Way{
-			Content: map[string]interface{}{
-				"osm_id":    id,
-				"extratags": tags,
-				"node_ids":  nodeIDs,
-			},
+			id, tags, nodeIDs,
 		})
 	}
 }

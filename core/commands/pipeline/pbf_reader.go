@@ -2,19 +2,19 @@ package pipeline
 
 import (
 	"github.com/meekyphotos/experive-cli/core/commands/osm"
+	"github.com/meekyphotos/experive-cli/core/dataproviders"
 	"io"
 	"os"
 	"runtime"
 )
 
-func ReadFromPbf(path string, heartbeat Heartbeat) (chan map[string]interface{}, chan map[string]interface{}, chan map[string]interface{}, error) {
+func ReadFromPbf(path string, heartbeat Heartbeat) (chan *dataproviders.INode, chan *osm.Way, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
-	outNodes := make(chan map[string]interface{}, 100000)
-	outWays := make(chan map[string]interface{}, 100000)
-	outRelations := make(chan map[string]interface{}, 100000)
+	outNodes := make(chan *dataproviders.INode, 100000)
+	outWays := make(chan *osm.Way, 100000)
 	heartbeat.Start()
 	go func() {
 		defer f.Close()
@@ -25,6 +25,7 @@ func ReadFromPbf(path string, heartbeat Heartbeat) (chan map[string]interface{},
 		}
 		d := osm.NewDecoder(open)
 		d.SetBufferSize(osm.MaxBlobSize)
+		d.Skip(false, false, true)
 		if err := d.Start(runtime.GOMAXPROCS(-1)); err != nil {
 			panic(err)
 		}
@@ -40,20 +41,20 @@ func ReadFromPbf(path string, heartbeat Heartbeat) (chan map[string]interface{},
 			switch v.(type) {
 			case *osm.Node:
 				node := v.(*osm.Node)
-				outNodes <- node.Content
+
+				outNodes <- &dataproviders.INode{
+					Id:      node.Id,
+					Content: node.Content,
+				}
 			case *osm.Way:
 				node := v.(*osm.Way)
-				outWays <- node.Content
+				outWays <- node
 			case *osm.Relation:
-				node := v.(*osm.Relation)
-				outRelations <- node.Content
-
 			default:
 			}
 		}
 		close(outNodes)
 		close(outWays)
-		close(outRelations)
 	}()
-	return outNodes, outWays, outRelations, nil
+	return outNodes, outWays, nil
 }

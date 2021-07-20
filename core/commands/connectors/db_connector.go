@@ -8,6 +8,7 @@ import (
 	"github.com/godruoyi/go-snowflake"
 	"github.com/lib/pq"
 	"github.com/meekyphotos/experive-cli/core/utils"
+	"log"
 	"regexp"
 	"strings"
 )
@@ -94,6 +95,7 @@ func (p *PgConnector) Write(data []map[string]interface{}) error {
 		}
 		_, err := stmt.Exec(vals...)
 		if err != nil {
+			log.Println(err)
 			return err
 		}
 	}

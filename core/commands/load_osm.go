@@ -3,16 +3,18 @@ package commands
 import (
 	"github.com/meekyphotos/experive-cli/core/commands/connectors"
 	"github.com/meekyphotos/experive-cli/core/commands/pipeline"
+	"github.com/meekyphotos/experive-cli/core/dataproviders"
 	"github.com/meekyphotos/experive-cli/core/utils"
 	"github.com/urfave/cli/v2"
+	"github.com/valyala/fastjson"
+	"os"
 	"sync"
 	"time"
 )
 
 type OsmRunner struct {
-	NodeConnector      connectors.Connector
-	WaysConnector      connectors.Connector
-	RelationsConnector connectors.Connector
+	store         dataproviders.Store
+	NodeConnector connectors.Connector
 }
 
 // 	ID      int64
@@ -26,18 +28,6 @@ var osmFields = []connectors.Column{
 	{Name: "type", Type: connectors.Text},
 	{Name: "name", Type: connectors.Jsonb},
 	{Name: "address", Type: connectors.Jsonb},
-}
-
-var wayFields = []connectors.Column{
-	{Name: "osm_id", Type: connectors.Bigint, Indexed: true},
-	{Name: "extratags", Type: connectors.Jsonb},
-	{Name: "node_ids", Type: connectors.Jsonb},
-}
-
-var relationFields = []connectors.Column{
-	{Name: "osm_id", Type: connectors.Bigint, Indexed: true},
-	{Name: "extratags", Type: connectors.Jsonb},
-	{Name: "members", Type: connectors.Jsonb},
 }
 
 func determineNodesCols(c *utils.Config) []connectors.Column {
@@ -63,69 +53,88 @@ func (r OsmRunner) Run(c *utils.Config) error {
 	if dbErr != nil {
 		return dbErr
 	}
-
-	r.WaysConnector = &connectors.PgConnector{
-		Config: c, TableName: c.TableName + "_ways", Db: pg.Db,
-	}
-	r.RelationsConnector = &connectors.PgConnector{
-		Config: c, TableName: c.TableName + "_relations", Db: pg.Db,
-	}
+	r.store = dataproviders.Store{}
+	os.RemoveAll("./db.tmp") // try to delete all to cleanup previous run
+	r.store.Open("./db.tmp")
+	defer func() {
+		os.RemoveAll("./db.tmp")
+	}()
+	defer r.store.Close()
 	// no need to close ways & relations
 	defer r.NodeConnector.Close()
 	dbErr = r.NodeConnector.Init(determineNodesCols(c))
 	if dbErr != nil {
 		return dbErr
 	}
-	dbErr = r.WaysConnector.Init(wayFields)
-	if dbErr != nil {
-		return dbErr
-	}
-	dbErr = r.RelationsConnector.Init(relationFields)
-	if dbErr != nil {
-		return dbErr
-	}
 
-	nodeChannel, wayChannel, relationChannel, err := pipeline.ReadFromPbf(c.File, &pipeline.NoopBeat{})
+	nodeChannel, wayChannel, err := pipeline.ReadFromPbf(c.File, &pipeline.NoopBeat{})
 	if err != nil {
 		return err
 	}
-	nodeRequests := pipeline.BatchRequest(nodeChannel, 10000, time.Second)
-	wayRequests := pipeline.BatchRequest(wayChannel, 10000, time.Second)
-	relationRequests := pipeline.BatchRequest(relationChannel, 10000, time.Second)
-	var pgWorkers sync.WaitGroup
+	nodeRequests := pipeline.BatchINodes(nodeChannel, 10000, time.Second)
+	var postProcessingWorkers sync.WaitGroup
 
 	nodeBeat := &pipeline.ProgressBarBeat{OperationName: "Nodes"}
-	relationBeat := &pipeline.ProgressBarBeat{OperationName: "Relations"}
 	waysBeat := &pipeline.ProgressBarBeat{OperationName: "Ways"}
+	actualBeat := &pipeline.ProgressBarBeat{OperationName: "Node written"}
 
-	pgWorkers.Add(1)
+	postProcessingWorkers.Add(1)
 	go func() {
-		err := pipeline.ProcessChannel(nodeRequests, r.NodeConnector, nodeBeat)
+		err := pipeline.ProcessINodes(nodeRequests, r.store, nodeBeat)
 		if err != nil {
 			panic(err)
 		}
-		pgWorkers.Done()
+		postProcessingWorkers.Done()
 	}()
 
-	pgWorkers.Add(1)
+	postProcessingWorkers.Add(1)
 	go func() {
-		err := pipeline.ProcessChannel(wayRequests, r.WaysConnector, waysBeat)
+		pipeline.ProcessNodeEnrichment(wayChannel, r.store, waysBeat)
+		postProcessingWorkers.Done()
+	}()
+
+	postProcessingWorkers.Wait()
+
+	// I'm completely done with post processing.. now I should start writing stuff
+	storeChannel := r.store.Stream(func(value *fastjson.Value) map[string]interface{} {
+		baseObject := map[string]interface{}{
+			"osm_id":    value.GetInt64("osm_id"),
+			"osm_type":  string(value.GetStringBytes("osm_type")),
+			"class":     string(value.GetStringBytes("class")),
+			"type":      string(value.GetStringBytes("type")),
+			"latitude":  value.GetFloat64("latitude"),
+			"longitude": value.GetFloat64("longitude"),
+			"name":      "",
+			"address":   "",
+			"extratags": "",
+		}
+		name := value.GetObject("name")
+		if name != nil {
+			baseObject["name"] = string(name.MarshalTo([]byte{}))
+		}
+		address := value.GetObject("address")
+		if address != nil {
+			baseObject["address"] = string(address.MarshalTo([]byte{}))
+		}
+
+		extratags := value.GetObject("extratags")
+		if extratags != nil {
+			baseObject["extratags"] = string(extratags.MarshalTo([]byte{}))
+		}
+		return baseObject
+	})
+	rowsChannel := pipeline.BatchRequest(storeChannel, 10000, time.Second)
+
+	var pgWorker sync.WaitGroup
+	pgWorker.Add(1)
+	go func() {
+		err := pipeline.ProcessChannel(rowsChannel, r.NodeConnector, actualBeat)
 		if err != nil {
 			panic(err)
 		}
-		pgWorkers.Done()
+		pgWorker.Done()
 	}()
-
-	pgWorkers.Add(1)
-	go func() {
-		err := pipeline.ProcessChannel(relationRequests, r.RelationsConnector, relationBeat)
-		if err != nil {
-			panic(err)
-		}
-		pgWorkers.Done()
-	}()
-
-	pgWorkers.Wait()
+	pgWorker.Wait()
 	return r.NodeConnector.CreateIndexes()
 }
 

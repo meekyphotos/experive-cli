@@ -1,6 +1,8 @@
 package osm
 
-import "time"
+import (
+	"time"
+)
 
 type BoundingBox struct {
 	Left   float64
@@ -30,11 +32,14 @@ type Info struct {
 }
 
 type Node struct {
-	Content map[string]interface{}
+	Id      int64
+	Content []byte
 }
 
 type Way struct {
-	Content map[string]interface{}
+	Id      int64
+	Tags    map[string]string
+	NodeIds []int64
 }
 
 type MemberType int

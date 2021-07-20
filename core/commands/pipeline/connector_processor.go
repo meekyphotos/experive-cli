@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"github.com/meekyphotos/experive-cli/core/commands/connectors"
+	"github.com/meekyphotos/experive-cli/core/dataproviders"
 	"time"
 )
 
@@ -34,6 +35,43 @@ func BatchRequest(values <-chan map[string]interface{}, maxItems int, maxTimeout
 
 		for keepGoing := true; keepGoing; {
 			var batch []map[string]interface{}
+			expire := time.After(maxTimeout)
+			for {
+				select {
+				case value, ok := <-values:
+					if !ok {
+						keepGoing = false
+						goto done
+					}
+
+					batch = append(batch, value)
+					if len(batch) == maxItems {
+						goto done
+					}
+
+				case <-expire:
+					goto done
+				}
+			}
+
+		done:
+			if len(batch) > 0 {
+				batches <- batch
+			}
+		}
+	}()
+
+	return batches
+}
+
+func BatchINodes(values <-chan *dataproviders.INode, maxItems int, maxTimeout time.Duration) chan []*dataproviders.INode {
+	batches := make(chan []*dataproviders.INode)
+
+	go func() {
+		defer close(batches)
+
+		for keepGoing := true; keepGoing; {
+			var batch []*dataproviders.INode
 			expire := time.After(maxTimeout)
 			for {
 				select {
