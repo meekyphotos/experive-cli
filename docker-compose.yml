@@ -1,0 +1,11 @@
+version: '2.1'
+
+services:
+  db:
+    image: postgis/postgis
+    environment:
+      - POSTGRES_DB=test
+      - POSTGRES_USER=meeky
+      - POSTGRES_PASSWORD=meeky
+    ports:
+      - "5432:5432"

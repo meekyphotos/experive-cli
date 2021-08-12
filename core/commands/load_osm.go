@@ -1,146 +1,90 @@
 package commands
 
 import (
-	"github.com/meekyphotos/experive-cli/core/commands/connectors"
+	"database/sql"
+	"fmt"
 	"github.com/meekyphotos/experive-cli/core/commands/pipeline"
-	"github.com/meekyphotos/experive-cli/core/dataproviders"
 	"github.com/meekyphotos/experive-cli/core/utils"
 	"github.com/urfave/cli/v2"
-	"github.com/valyala/fastjson"
-	"os"
-	"sync"
 	"time"
 )
 
 type OsmRunner struct {
-	store         dataproviders.Store
-	NodeConnector connectors.Connector
+	config *utils.Config
+	db     *sql.DB
 }
 
-// 	ID      int64
-//	Tags    map[string]string
-//	NodeIDs []int64
-
-var osmFields = []connectors.Column{
-	{Name: "osm_id", Type: connectors.Bigint, Indexed: true},
-	{Name: "osm_type", Type: connectors.Text},
-	{Name: "class", Type: connectors.Text},
-	{Name: "type", Type: connectors.Text},
-	{Name: "name", Type: connectors.Jsonb},
-	{Name: "address", Type: connectors.Jsonb},
-}
-
-func determineNodesCols(c *utils.Config) []connectors.Column {
-	cols := make([]connectors.Column, 0)
-	cols = append(cols, osmFields...)
-	if c.InclKeyValues {
-		cols = append(cols, connectors.Column{Name: "extratags", Type: connectors.Jsonb})
-	}
-	if c.UseGeom {
-		cols = append(cols, geomFields...)
-	} else {
-		cols = append(cols, latLngFields...)
-	}
-	return cols
-}
-
-func (r OsmRunner) Run(c *utils.Config) error {
-	pg := &connectors.PgConnector{
-		Config: c, TableName: c.TableName + "_node",
-	}
-	r.NodeConnector = pg
-	dbErr := r.NodeConnector.Connect()
-	if dbErr != nil {
-		return dbErr
-	}
-	r.store = dataproviders.Store{}
-	os.RemoveAll("./db.tmp") // try to delete all to cleanup previous run
-	r.store.Open("./db.tmp")
-	defer func() {
-		os.RemoveAll("./db.tmp")
-	}()
-	defer r.store.Close()
-	// no need to close ways & relations
-	defer r.NodeConnector.Close()
-	dbErr = r.NodeConnector.Init(determineNodesCols(c))
-	if dbErr != nil {
-		return dbErr
-	}
-
-	nodeChannel, wayChannel, err := pipeline.ReadFromPbf(c.File, &pipeline.NoopBeat{})
+func (r *OsmRunner) prepare() error {
+	fmt.Println("Connecting to database")
+	connStr := fmt.Sprintf("user=%s dbname=%s password=%s host=%s sslmode=disable",
+		r.config.UserName, r.config.DbName, r.config.Password, r.config.Host)
+	conn, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return err
 	}
-	nodeRequests := pipeline.BatchINodes(nodeChannel, 10000, time.Second)
-	var postProcessingWorkers sync.WaitGroup
+	r.db = conn
+	return nil
+}
 
-	nodeBeat := &pipeline.ProgressBarBeat{OperationName: "Nodes"}
-	waysBeat := &pipeline.ProgressBarBeat{OperationName: "Ways"}
-	actualBeat := &pipeline.ProgressBarBeat{OperationName: "Node written"}
+func (r *OsmRunner) createTables() error {
+	fmt.Println("Creating table & index")
+	_, err := r.db.Exec("DROP TABLE IF EXISTS place")
+	if err != nil {
+		return err
+	}
+	_, err = r.db.Exec(`
+			CREATE TABLE place (
+				osm_id bigint not null,
+				osm_type text not null,
+				class text not null,
+				type text not null,
+				name jsonb, 
+				admin_level smallint, 
+				address jsonb,
+				extratags jsonb, 
+				geometry geometry(point),
+				primary key (osm_id, osm_type, class)
+		   )`)
+	if err != nil {
+		return err
+	}
 
-	postProcessingWorkers.Add(1)
-	go func() {
-		err := pipeline.ProcessINodes(nodeRequests, r.store, nodeBeat)
-		if err != nil {
-			panic(err)
-		}
-		postProcessingWorkers.Done()
-	}()
+	_, err = r.db.Exec("CREATE INDEX place_id_idx ON place USING BTREE(osm_type, osm_id)")
 
-	postProcessingWorkers.Add(1)
-	go func() {
-		pipeline.ProcessNodeEnrichment(wayChannel, r.store, waysBeat)
-		postProcessingWorkers.Done()
-	}()
+	return err
+}
 
-	postProcessingWorkers.Wait()
+func (r *OsmRunner) runLoading() error {
+	fmt.Println("Importing data")
+	pbf, err := pipeline.ReadFromPbf(r.config.File, &pipeline.NoopBeat{})
+	if err != nil {
+		return err
+	}
+	buffered := pipeline.BatchRequests(pbf, 100_000, 30*time.Second)
+	channel := pipeline.CopyIn(buffered, r.db)
+	<-channel
+	return err
+}
 
-	// I'm completely done with post processing.. now I should start writing stuff
-	storeChannel := r.store.Stream(func(value *fastjson.Value) map[string]interface{} {
-		baseObject := map[string]interface{}{
-			"osm_id":    value.GetInt64("osm_id"),
-			"osm_type":  string(value.GetStringBytes("osm_type")),
-			"class":     string(value.GetStringBytes("class")),
-			"type":      string(value.GetStringBytes("type")),
-			"latitude":  value.GetFloat64("latitude"),
-			"longitude": value.GetFloat64("longitude"),
-			"name":      "",
-			"address":   "",
-			"extratags": "",
-		}
-		name := value.GetObject("name")
-		if name != nil {
-			baseObject["name"] = string(name.MarshalTo([]byte{}))
-		}
-		address := value.GetObject("address")
-		if address != nil {
-			baseObject["address"] = string(address.MarshalTo([]byte{}))
-		}
+func (r *OsmRunner) cleanup() error {
+	fmt.Println("Cleaning up")
+	return r.db.Close()
+}
 
-		extratags := value.GetObject("extratags")
-		if extratags != nil {
-			baseObject["extratags"] = string(extratags.MarshalTo([]byte{}))
-		}
-		return baseObject
-	})
-	rowsChannel := pipeline.BatchRequest(storeChannel, 10000, time.Second)
-
-	var pgWorker sync.WaitGroup
-	pgWorker.Add(1)
-	go func() {
-		err := pipeline.ProcessChannel(rowsChannel, r.NodeConnector, actualBeat)
-		if err != nil {
-			panic(err)
-		}
-		pgWorker.Done()
-	}()
-	pgWorker.Wait()
-	return r.NodeConnector.CreateIndexes()
+func (r *OsmRunner) Run(c *utils.Config) error {
+	r.config = c
+	pipe := pipeline.Pipeline{}
+	pipe.Add(
+		r.prepare,
+		r.createTables,
+		r.runLoading,
+		r.cleanup)
+	return pipe.RunPipe()
 }
 
 func LoadOsmMeta() *cli.Command {
 	stdAction := utils.DatabaseLoader{
-		Runner:           OsmRunner{},
+		Runner:           &OsmRunner{},
 		PasswordProvider: utils.TerminalPasswordReader{},
 	}
 

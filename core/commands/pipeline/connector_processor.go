@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"github.com/meekyphotos/experive-cli/core/commands/connectors"
-	"github.com/meekyphotos/experive-cli/core/dataproviders"
 	"time"
 )
 
@@ -64,14 +63,14 @@ func BatchRequest(values <-chan map[string]interface{}, maxItems int, maxTimeout
 	return batches
 }
 
-func BatchINodes(values <-chan *dataproviders.INode, maxItems int, maxTimeout time.Duration) chan []*dataproviders.INode {
-	batches := make(chan []*dataproviders.INode)
+func BatchRequests(values <-chan []interface{}, size int, maxTimeout time.Duration) chan [][]interface{} {
+	batches := make(chan [][]interface{})
 
 	go func() {
 		defer close(batches)
 
 		for keepGoing := true; keepGoing; {
-			var batch []*dataproviders.INode
+			batch := make([][]interface{}, 0, size)
 			expire := time.After(maxTimeout)
 			for {
 				select {
@@ -80,9 +79,8 @@ func BatchINodes(values <-chan *dataproviders.INode, maxItems int, maxTimeout ti
 						keepGoing = false
 						goto done
 					}
-
 					batch = append(batch, value)
-					if len(batch) == maxItems {
+					if len(batch) == size {
 						goto done
 					}
 
@@ -93,6 +91,7 @@ func BatchINodes(values <-chan *dataproviders.INode, maxItems int, maxTimeout ti
 
 		done:
 			if len(batch) > 0 {
+				println("Sending batch to postgres")
 				batches <- batch
 			}
 		}

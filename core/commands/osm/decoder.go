@@ -82,7 +82,7 @@ func (dec *Decoder) Header() (*Header, error) {
 }
 
 // Start decoding process using n goroutines.
-func (dec *Decoder) Start(n int) error {
+func (dec *Decoder) Start(n int, styler *GazetteerStyler) error {
 	if n < 1 {
 		n = 1
 	}
@@ -97,6 +97,7 @@ func (dec *Decoder) Start(n int) error {
 		output := make(chan pair)
 		go func() {
 			dd := new(dataDecoder)
+			dd.styler = styler
 			dd.skipNodes = dec.skipNodes
 			dd.skipWays = dec.skipWays
 			dd.skipRelations = dec.skipRelations

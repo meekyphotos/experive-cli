@@ -38,7 +38,7 @@ func ParseDbConfig(pwdProvider PasswordProvider, context *cli.Context) Config {
 		pwd, _ := pwdProvider.ReadPassword()
 		cfg.Password = pwd
 	} else {
-		cfg.Password = "mysecretpassword"
+		cfg.Password = cfg.UserName
 	}
 	cfg.Host = context.String("H")
 	cfg.Port = context.Int("P")

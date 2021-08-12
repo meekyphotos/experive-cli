@@ -32,8 +32,7 @@ type Info struct {
 }
 
 type Node struct {
-	Id      int64
-	Content []byte
+	Content []interface{}
 }
 
 type Way struct {

@@ -1,7 +1,6 @@
 package osm
 
 import (
-	"fmt"
 	"github.com/meekyphotos/experive-cli/core/commands/pbf"
 	"google.golang.org/protobuf/proto"
 )
@@ -11,6 +10,7 @@ type dataDecoder struct {
 	skipNodes     bool
 	skipWays      bool
 	skipRelations bool
+	styler        *GazetteerStyler
 }
 
 func (dec *dataDecoder) Decode(blob *pbf.Blob) ([]interface{}, error) {
@@ -37,88 +37,29 @@ func (dec *dataDecoder) parsePrimitiveBlock(pb *pbf.PrimitiveBlock) {
 }
 
 func (dec *dataDecoder) parsePrimitiveGroup(pb *pbf.PrimitiveBlock, pg *pbf.PrimitiveGroup) {
-	//if !dec.skipNodes {
 	dec.parseNodes(pb, pg.GetNodes())
 	dec.parseDenseNodes(pb, pg.GetDense())
-	//}
-	//if !dec.skipWays {
 	dec.parseWays(pb, pg.GetWays())
-	//}
-	//if !dec.skipRelations {
 	dec.parseRelations(pb, pg.GetRelations())
-	//}
 }
 
-var osmIdBytes = []byte("osm_id")
-var osmTypeBytes = []byte("osm_type")
-var classBytes = []byte("class")
-var typeBytes = []byte("type")
-var latitudeBytes = []byte("latitude")
-var longitudeBytes = []byte("longitude")
-var metadataBytes = []byte("extratags")
-var namesBytes = []byte("name")
-var addressesBytes = []byte("address")
-
 func (dec *dataDecoder) parseNodes(pb *pbf.PrimitiveBlock, nodes []*pbf.Node) {
-	st := pb.GetStringtable().GetS()
-	granularity := int64(pb.GetGranularity())
-
-	latOffset := pb.GetLatOffset()
-	lonOffset := pb.GetLonOffset()
-	// identify unwanted keys
-	for _, node := range nodes {
-		id := node.GetId()
-		lat := node.GetLat()
-		lon := node.GetLon()
-
-		latitude := 1e-9 * float64(latOffset+(granularity*lat))
-		longitude := 1e-9 * float64(lonOffset+(granularity*lon))
-
-		tags, names, class, osmType := ExtractInfo(st, node.GetKeys(), node.GetVals())
-		dec.addNodeQueue(tags, names, id, []byte(class), []byte(osmType), "", latitude, longitude)
+	if len(nodes) > 0 {
+		for _, n := range nodes {
+			println("Found node: ", n)
+			for _, c := range dec.styler.Parse(pb, n) {
+				dec.q = append(dec.q, &Node{Content: c})
+			}
+		}
 	}
 
 }
 
 func (dec *dataDecoder) parseDenseNodes(pb *pbf.PrimitiveBlock, dn *pbf.DenseNodes) {
-	st := pb.GetStringtable().GetS()
-	granularity := int64(pb.GetGranularity())
-	latOffset := pb.GetLatOffset()
-	lonOffset := pb.GetLonOffset()
-	ids := dn.GetId()
-	lats := dn.GetLat()
-	lons := dn.GetLon()
-
-	tu := tagUnpacker{st, dn.GetKeysVals(), 0}
-	var id, lat, lon int64
-	for index := range ids {
-		id = ids[index] + id
-		lat = lats[index] + lat
-		lon = lons[index] + lon
-		latitude := 1e-9 * float64(latOffset+(granularity*lat))
-		longitude := 1e-9 * float64(lonOffset+(granularity*lon))
-		tags, names, address, class, osmType := tu.next()
-		dec.addNodeQueue(tags, names, id, class, osmType, address, latitude, longitude)
-	}
-}
-
-func (dec *dataDecoder) addNodeQueue(tags string, names string, id int64, class []byte, osmType []byte, address string, latitude float64, longitude float64) {
-	if len(tags) != 0 || len(names) != 0 {
-		json := newJson()
-		json.addPrimitive(osmIdBytes, []byte(fmt.Sprintf("%d", id)))
-		json.add(osmTypeBytes, []byte("N"))
-		json.add(classBytes, class)
-		json.add(typeBytes, osmType)
-		json.addPrimitive(namesBytes, []byte(names))
-		json.addPrimitive(addressBytes, []byte(address))
-		json.addPrimitive(metadataBytes, []byte(tags))
-		json.addPrimitive(latitudeBytes, []byte(fmt.Sprintf("%f", latitude)))
-		json.addPrimitive(longitudeBytes, []byte(fmt.Sprintf("%f", longitude)))
-		json.close()
-		dec.q = append(dec.q, &Node{
-			Id:      id,
-			Content: []byte(json.toString()),
-		})
+	if dn != nil {
+		for _, c := range dec.styler.ParseDense(pb, dn) {
+			dec.q = append(dec.q, &Node{Content: c})
+		}
 	}
 }
 
